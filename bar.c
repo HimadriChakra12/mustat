@@ -130,7 +130,6 @@ void bar_run(void)
     Window root  = RootWindow(dpy, screen);
 
     XSetWindowAttributes attr = {0};
-    attr.override_redirect = True;
 
     Window win = XCreateWindow(
         dpy, root,
@@ -140,7 +139,7 @@ void bar_run(void)
         DefaultDepth(dpy, screen),
         CopyFromParent,
         DefaultVisual(dpy, screen),
-        CWOverrideRedirect,
+        0,
         &attr
     );
 
