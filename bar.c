@@ -28,7 +28,7 @@ static void redraw(Draw *draw, int width, int text_y, char *ws_buf)
     }
 
     /* RIGHT */
-    int rx = width - padding;
+    int rx = width - margin - padding;
     for (int i = right_count - 1; i >= 0; i--) {
         module_run(&right_modules[i]);
         int w = text_width(draw, right_modules[i].output);
@@ -61,22 +61,47 @@ void bar_run(void)
     XSetWindowAttributes attr = {0};
     attr.override_redirect = True;
 
-    Window win = XCreateWindow(
-        dpy, root, 0, 0, width, bar_height, 0,
-        DefaultDepth(dpy, screen), CopyFromParent,
-        DefaultVisual(dpy, screen), CWOverrideRedirect, &attr
-    );
+Window win = XCreateWindow(
+    dpy, root,
+    margin,            /* x */
+    margin,            /* y */
+    width - 2*margin,  /* width */
+    bar_height,        /* height */
+    0,                 /* border width */
+    DefaultDepth(dpy, screen),
+    CopyFromParent,
+    DefaultVisual(dpy, screen),
+    CWOverrideRedirect,
+    &attr
+);
 
-    Atom dock = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
-    Atom type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
-    XChangeProperty(dpy, win, type, XA_ATOM, 32, PropModeReplace,
-                    (unsigned char*)&dock, 1);
+/* set dock type FIRST */
+Atom dock = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
+Atom type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+XChangeProperty(dpy, win, type, XA_ATOM, 32, PropModeReplace,
+        (unsigned char*)&dock, 1);
 
-    XMapWindow(dpy, win);
+/* set strut BEFORE mapping */
+Atom strut_partial = XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False);
+long struts[12] = {0};
+struts[2] = bar_height + margin;
+struts[8] = margin;
+struts[9] = width - margin;
+XChangeProperty(dpy, win, strut_partial, XA_CARDINAL, 32,
+        PropModeReplace, (unsigned char*)struts, 12);
 
-    Draw draw;
-    draw_init(&draw, dpy, win, font, fg, bg);
-    int text_y = (bar_height + draw.font->ascent - draw.font->descent) / 2;
+Atom strut = XInternAtom(dpy, "_NET_WM_STRUT", False);
+XChangeProperty(dpy, win, strut, XA_CARDINAL, 32,
+        PropModeReplace, (unsigned char*)struts, 4);
+
+/* map AFTER all properties are set */
+XMapWindow(dpy, win);
+
+/* ← remove everything between here and draw_init */
+
+Draw draw;
+draw_init(&draw, dpy, win, font, fg, bg);
+int text_y = (bar_height + draw.font->ascent - draw.font->descent) / 2;
 
     /* persistent i3 subscription socket */
     int i3_fd = i3_subscribe_workspaces();

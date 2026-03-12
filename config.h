@@ -1,43 +1,29 @@
 #ifndef CONFIG_H
 #define CONFIG_H
-
 #include "module.h"
 
-static const char *font =
-"JetBrainsMono Nerd Font:size=10";
+static const char *font   = "JetBrainsMono Nerd Font:size=10";
+static const char *fg     = "#282828";
+static const char *bg     = "#ffffff";
+static int padding        = 20;
+static int bar_height     = 42;
+static int margin = 10;  /* pixels — set to 0 to disable */
 
-static const char *bg = "#000000";
-static const char *fg = "#ffffff";
+/* LEFT — workspace is handled natively in bar.c via i3ipc, no module needed */
+static Module left_modules[]   = { };
+static int    left_count       = 0;
 
-static int padding = 20;
-static int bar_height = 42;
-
-/* LEFT MODULES */
-
-static Module left_modules[] = {
-    { "scripts/workspace.sh", "" }
-};
-
-static int left_count =
-sizeof(left_modules)/sizeof(Module);
-
-/* CENTER MODULES */
-
+/* CENTER */
 static Module center_modules[] = {
-    { "scripts/clock.sh", "" }
+    { MOD_CLOCK, NULL, "" }
 };
+static int center_count = sizeof(center_modules) / sizeof(Module);
 
-static int center_count =
-sizeof(center_modules)/sizeof(Module);
-
-/* RIGHT MODULES */
-
+/* RIGHT */
 static Module right_modules[] = {
-    { "scripts/mem.sh", "" },
-    { "scripts/cpu.sh", "" }
+    { MOD_MEM, NULL, "" },
+    { MOD_CPU, NULL, "" }
 };
-
-static int right_count =
-sizeof(right_modules)/sizeof(Module);
+static int right_count = sizeof(right_modules) / sizeof(Module);
 
 #endif
