@@ -1,11 +1,15 @@
-CC=gcc
-CFLAGS=-O2 -Wall -std=c99 -D_POSIX_C_SOURCE=200809L $(shell pkg-config --cflags xft)
-LIBS=$(shell pkg-config --libs xft) -lX11 -ljson-c
+CC      = gcc
+CFLAGS  = -O2 -Wall -std=c99 -D_POSIX_C_SOURCE=200809L \
+          -I/usr/include/freetype2 -I/usr/include/libpng16
+LIBS    = -lXft -lX11
 
-SRC=main.c bar.c draw.c module.c i3ipc.c
+all: ibar iblocks/iblocks
 
-ibar:
-	$(CC) $(CFLAGS) $(SRC) -o ibar $(LIBS)
+ibar: main.c bar.c draw.c i3ipc.c
+	$(CC) $(CFLAGS) $^ -o $@ $(LIBS)
+
+iblocks/iblocks: iblocks/main.c iblocks/module.c
+	$(CC) $(CFLAGS) -Iiblocks $^ -o $@
 
 clean:
-	rm -f ibar
+	rm -f ibar iblocks/iblocks

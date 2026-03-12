@@ -1,54 +1,125 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "bar.h"
 #include "draw.h"
-#include "module.h"
 #include "i3ipc.h"
+#include "ipc.h"
 #include "config.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/select.h>
-#include <time.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <fcntl.h>
 
-static void redraw(Draw *draw, int width, int text_y, char *ws_buf)
+#define MAX_BLOCKS 32
+
+typedef enum { POS_LEFT, POS_CENTER, POS_RIGHT } Pos;
+
+typedef struct {
+    int  slot;
+    Pos  pos;
+    char text[256];
+} Block;
+
+static Block blocks[MAX_BLOCKS];
+static int   block_count = 0;
+
+static void block_update(Pos pos, int slot, const char *text)
 {
-    draw_rect(draw, 0, 0, width, bar_height);
+    for (int i = 0; i < block_count; i++) {
+        if (blocks[i].pos == slot && blocks[i].slot == slot) {
+            snprintf(blocks[i].text, sizeof(blocks[i].text), "%s", text);
+            return;
+        }
+    }
+    if (block_count < MAX_BLOCKS) {
+        blocks[block_count].pos  = pos;
+        blocks[block_count].slot = slot;
+        snprintf(blocks[block_count].text, sizeof(blocks[block_count].text), "%s", text);
+        block_count++;
+    }
+}
 
-    /* LEFT — workspace (driven by i3 events) */
+/* parse "LEFT:1:some text" */
+static void parse_line(char *line)
+{
+    Pos pos;
+    if      (strncmp(line, "LEFT:",   5) == 0) { pos = POS_LEFT;   line += 5; }
+    else if (strncmp(line, "CENTER:", 7) == 0) { pos = POS_CENTER; line += 7; }
+    else if (strncmp(line, "RIGHT:",  6) == 0) { pos = POS_RIGHT;  line += 6; }
+    else return;
+
+    int slot = atoi(line);
+    char *colon = strchr(line, ':');
+    if (!colon) return;
+    block_update(pos, slot, colon + 1);
+}
+
+static int blocks_total_width(Draw *draw, Pos pos)
+{
+    int w = 0;
+    for (int i = 0; i < block_count; i++) {
+        if (blocks[i].pos != pos) continue;
+        w += text_width(draw, blocks[i].text) + padding;
+    }
+    return w;
+}
+
+static void redraw(Draw *draw, int bar_width, int text_y, char *ws_buf)
+{
+    draw_rect(draw, 0, 0, bar_width, bar_height);
+
+    /* LEFT — workspace always first */
     int x = padding;
     draw_text(draw, x, text_y, ws_buf);
     x += text_width(draw, ws_buf) + padding;
 
-    /* any extra left modules */
-    for (int i = 0; i < left_count; i++) {
-        module_run(&left_modules[i]);
-        draw_text(draw, x, text_y, left_modules[i].output);
-        x += text_width(draw, left_modules[i].output) + padding;
+    for (int i = 0; i < block_count; i++) {
+        if (blocks[i].pos != POS_LEFT) continue;
+        draw_text(draw, x, text_y, blocks[i].text);
+        x += text_width(draw, blocks[i].text) + padding;
     }
 
     /* RIGHT */
-    int rx = width - margin - padding;
-    for (int i = right_count - 1; i >= 0; i--) {
-        module_run(&right_modules[i]);
-        int w = text_width(draw, right_modules[i].output);
+    int rx = bar_width - padding;
+    for (int i = block_count - 1; i >= 0; i--) {
+        if (blocks[i].pos != POS_RIGHT) continue;
+        int w = text_width(draw, blocks[i].text);
         rx -= w;
-        draw_text(draw, rx, text_y, right_modules[i].output);
+        draw_text(draw, rx, text_y, blocks[i].text);
         rx -= padding;
     }
 
     /* CENTER */
-    int center_width = 0;
-    for (int i = 0; i < center_count; i++) {
-        module_run(&center_modules[i]);
-        center_width += text_width(draw, center_modules[i].output);
-        if (i < center_count - 1) center_width += padding;
+    int cw = blocks_total_width(draw, POS_CENTER);
+    int cx = (bar_width - cw) / 2;
+    for (int i = 0; i < block_count; i++) {
+        if (blocks[i].pos != POS_CENTER) continue;
+        draw_text(draw, cx, text_y, blocks[i].text);
+        cx += text_width(draw, blocks[i].text) + padding;
     }
-    int cx = (width - center_width) / 2;
-    for (int i = 0; i < center_count; i++) {
-        draw_text(draw, cx, text_y, center_modules[i].output);
-        cx += text_width(draw, center_modules[i].output) + padding;
-    }
+}
+
+static int server_init(void)
+{
+    unlink(IBAR_SOCKET);
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+
+    fcntl(fd, F_SETFL, O_NONBLOCK);
+
+    struct sockaddr_un addr = {0};
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", IBAR_SOCKET);
+
+    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(fd); return -1; }
+    listen(fd, 4);
+    return fd;
 }
 
 void bar_run(void)
@@ -61,76 +132,126 @@ void bar_run(void)
     XSetWindowAttributes attr = {0};
     attr.override_redirect = True;
 
-Window win = XCreateWindow(
-    dpy, root,
-    margin,            /* x */
-    margin,            /* y */
-    width - 2*margin,  /* width */
-    bar_height,        /* height */
-    0,                 /* border width */
-    DefaultDepth(dpy, screen),
-    CopyFromParent,
-    DefaultVisual(dpy, screen),
-    CWOverrideRedirect,
-    &attr
-);
+    Window win = XCreateWindow(
+        dpy, root,
+        margin, margin,
+        width - 2*margin, bar_height,
+        0,
+        DefaultDepth(dpy, screen),
+        CopyFromParent,
+        DefaultVisual(dpy, screen),
+        CWOverrideRedirect,
+        &attr
+    );
 
-/* set dock type FIRST */
-Atom dock = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
-Atom type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
-XChangeProperty(dpy, win, type, XA_ATOM, 32, PropModeReplace,
-        (unsigned char*)&dock, 1);
+    XStoreName(dpy, win, "ibar");
 
-/* set strut BEFORE mapping */
-Atom strut_partial = XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False);
-long struts[12] = {0};
-struts[2] = bar_height + margin;
-struts[8] = margin;
-struts[9] = width - margin;
-XChangeProperty(dpy, win, strut_partial, XA_CARDINAL, 32,
-        PropModeReplace, (unsigned char*)struts, 12);
+    /* dock type */
+    Atom dock = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
+    Atom type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+    XChangeProperty(dpy, win, type, XA_ATOM, 32, PropModeReplace,
+                    (unsigned char*)&dock, 1);
 
-Atom strut = XInternAtom(dpy, "_NET_WM_STRUT", False);
-XChangeProperty(dpy, win, strut, XA_CARDINAL, 32,
-        PropModeReplace, (unsigned char*)struts, 4);
+    /* strut */
+    Atom strut_partial = XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False);
+    long struts[12] = {0};
+    struts[2] = bar_height + margin;
+    struts[8] = margin;
+    struts[9] = width - margin;
+    XChangeProperty(dpy, win, strut_partial, XA_CARDINAL, 32,
+                    PropModeReplace, (unsigned char*)struts, 12);
+    Atom strut = XInternAtom(dpy, "_NET_WM_STRUT", False);
+    XChangeProperty(dpy, win, strut, XA_CARDINAL, 32,
+                    PropModeReplace, (unsigned char*)struts, 4);
 
-/* map AFTER all properties are set */
-XMapWindow(dpy, win);
+    XMapWindow(dpy, win);
+    XRaiseWindow(dpy, win);
 
-/* ← remove everything between here and draw_init */
+    Draw draw;
+    draw_init(&draw, dpy, win, font, fg, bg);
+    int bar_width = width - 2*margin;
+    int text_y    = (bar_height + draw.font->ascent - draw.font->descent) / 2;
 
-Draw draw;
-draw_init(&draw, dpy, win, font, fg, bg);
-int text_y = (bar_height + draw.font->ascent - draw.font->descent) / 2;
+    int i3_fd  = i3_subscribe_workspaces();
+    int srv_fd = server_init();
 
-    /* persistent i3 subscription socket */
-    int i3_fd = i3_subscribe_workspaces();
-
-    /* initial workspace fetch */
     char ws_buf[256];
     i3_get_workspaces(-1, ws_buf, sizeof(ws_buf));
 
-    /* initial draw */
-    redraw(&draw, width, text_y, ws_buf);
+    redraw(&draw, bar_width, text_y, ws_buf);
     XFlush(dpy);
+
+    /* connected iblocks clients */
+    int clients[8];
+    int client_count = 0;
+    memset(clients, -1, sizeof(clients));
+
+    char linebuf[512];
 
     while (1)
     {
-        /* wake up on i3 event OR every 1 second for clock/cpu/mem */
         fd_set fds;
         FD_ZERO(&fds);
-        if (i3_fd >= 0) FD_SET(i3_fd, &fds);
+        if (i3_fd  >= 0) FD_SET(i3_fd,  &fds);
+        if (srv_fd >= 0) FD_SET(srv_fd, &fds);
+
+        int maxfd = (i3_fd > srv_fd ? i3_fd : srv_fd);
+
+        for (int i = 0; i < client_count; i++) {
+            if (clients[i] >= 0) {
+                FD_SET(clients[i], &fds);
+                if (clients[i] > maxfd) maxfd = clients[i];
+            }
+        }
 
         struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
-        int ret = select(i3_fd + 1, &fds, NULL, NULL, &tv);
+        int ret = select(maxfd + 1, &fds, NULL, NULL, &tv);
 
-        if (ret > 0 && i3_fd >= 0 && FD_ISSET(i3_fd, &fds)) {
-            /* workspace changed — drain event, re-fetch */
-            i3_drain_event(i3_fd);
-            i3_get_workspaces(-1, ws_buf, sizeof(ws_buf));
+        int dirty = 0;
+
+        if (ret > 0) {
+            /* new iblocks connection */
+            if (srv_fd >= 0 && FD_ISSET(srv_fd, &fds)) {
+                int cfd = accept(srv_fd, NULL, NULL);
+                if (cfd >= 0 && client_count < 8)
+                    clients[client_count++] = cfd;
+            }
+
+            /* data from iblocks */
+            for (int i = 0; i < client_count; i++) {
+                if (clients[i] < 0 || !FD_ISSET(clients[i], &fds)) continue;
+                int n = read(clients[i], linebuf, sizeof(linebuf) - 1);
+                if (n <= 0) {
+                    close(clients[i]);
+                    clients[i] = -1;
+                } else {
+                    linebuf[n] = 0;
+                    /* split on newlines */
+                    char *line = linebuf;
+                    char *nl;
+                    while ((nl = strchr(line, '\n'))) {
+                        *nl = 0;
+                        if (*line) parse_line(line);
+                        line = nl + 1;
+                    }
+                    dirty = 1;
+                }
+            }
+
+            /* i3 workspace event */
+            if (i3_fd >= 0 && FD_ISSET(i3_fd, &fds)) {
+                i3_drain_event(i3_fd);
+                i3_get_workspaces(-1, ws_buf, sizeof(ws_buf));
+                dirty = 1;
+            }
+        } else {
+            /* 1s tick */
+            dirty = 1;
         }
-        /* always redraw (updates clock/cpu/mem on timer, workspace on event) */
-        redraw(&draw, width, text_y, ws_buf);
-        XFlush(dpy);
+
+        if (dirty) {
+            redraw(&draw, bar_width, text_y, ws_buf);
+            XFlush(dpy);
+        }
     }
 }
