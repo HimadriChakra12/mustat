@@ -3,17 +3,41 @@
 
 #include "module.h"
 
-// left, center, right modules
+static const char *font =
+"JetBrainsMono Nerd Font:size=10";
+
+static const char *bg = "#000000";
+static const char *fg = "#ffffff";
+
+static int padding = 20;
+static int bar_height = 42;
+
+/* LEFT MODULES */
+
 static Module left_modules[] = {
-    { "cpu", "scripts/cpu.sh", 2 },
+    { "scripts/workspace.sh", "" }
 };
+
+static int left_count =
+sizeof(left_modules)/sizeof(Module);
+
+/* CENTER MODULES */
 
 static Module center_modules[] = {
-    { "time", "scripts/time.sh", 1 },
+    { "scripts/clock.sh", "" }
 };
 
+static int center_count =
+sizeof(center_modules)/sizeof(Module);
+
+/* RIGHT MODULES */
+
 static Module right_modules[] = {
-    { "mem", "scripts/mem.sh", 2 },
+    { "scripts/mem.sh", "" },
+    { "scripts/cpu.sh", "" }
 };
+
+static int right_count =
+sizeof(right_modules)/sizeof(Module);
 
 #endif
