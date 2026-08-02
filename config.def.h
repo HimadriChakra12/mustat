@@ -16,20 +16,22 @@ static int margin             = 0;
 static int sep_pad            = 10; /* space either side of a separator line */
 
 /* ── systray ──────────────────────────────────────────────── */
-static int tray_icon_size     = 14;
+static int tray_icon_size     = 20;
 static int tray_icon_gap      = 6;
-static int tray_pad           = 12; /* space between tray icons and separator */
+static int tray_pad           = 12;
+static const char *tray_collapsed_glyph = "\u25B6"; /* ▶ collapsed indicator */
+static const char *tray_expanded_glyph  = "\u25C0"; /* ◀ expanded indicator  */
 
 static WsStyle ws_style = WS_STYLE_UNDERLINE;
 static WsPos   ws_pos   = WS_POS_LEFT;
 
 // index i = label for workspace i+1. NULL or "" falls back to the plain number, so you only need to name the ones you use.
 static const char *ws_names[] = {
-    "!", "@", "#", "$", "%", "^", "&", "*", "(",
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 };
 static int ws_name_count = sizeof(ws_names) / sizeof(ws_names[0]);
 
-static int ws_gap             = 10;  /* spacing between workspace items       */
+static int ws_gap             = 9;  /* spacing between workspace items       */
 static int ws_inset           = 8;  /* vertical inset for boxes/underline    */
 
 /* WS_STYLE_BLOCK only */
@@ -39,7 +41,7 @@ static const char *ws_block_active_fg = "#000000";
 static int ws_block_pad       = 5;
 
 /* WS_STYLE_UNDERLINE only */
-static const char *ws_underline_color = "#e2d2ab";
+static const char *ws_underline_color = "#ffffff";
 static int ws_underline_h     = 2;
 
 #endif

@@ -13,8 +13,14 @@ LUA_LIBS   := $(shell pkg-config --libs   lua5.4 2>/dev/null || pkg-config --lib
 
 all: mustat mublocks/mustat-blocks
 
-mustat: main.c bar.c draw.c workspace.c ws_render.c tray.c
-	$(CC) $(CFLAGS) $^ -o $@ $(LIBS)
+# config.h is your local, editable copy — created once from the
+# tracked defaults and never touched again, even if config.def.h
+# changes later. Delete config.h yourself if you want to reset it.
+config.h:
+	cp config.def.h $@
+
+mustat: config.h main.c bar.c draw.c workspace.c ws_render.c tray.c
+	$(CC) $(CFLAGS) main.c bar.c draw.c workspace.c ws_render.c tray.c -o $@ $(LIBS)
 
 mublocks/mustat-blocks: mublocks/main.c mublocks/module.c mublocks/lua_config.c
 	$(CC) $(CFLAGS) $(LUA_CFLAGS) -Imublocks $^ -o $@ $(LUA_LIBS)
@@ -26,6 +32,10 @@ install:
 	install mustat $(PREFIX)/bin/mustat
 	install mublocks/mustat-blocks $(PREFIX)/bin/mustat-blocks
 	install -d -o $(OWNER) -g $(OWNER) $(HOMEDIR)/.config/mustat
-	install -o $(OWNER) -g $(OWNER) data/mu.lua $(HOMEDIR)/.config/mustat/mu.lua
+	@if [ -e $(HOMEDIR)/.config/mustat/mu.lua ]; then \
+		echo "install: $(HOMEDIR)/.config/mustat/mu.lua already exists, leaving it alone"; \
+	else \
+		install -o $(OWNER) -g $(OWNER) data/mu.lua $(HOMEDIR)/.config/mustat/mu.lua; \
+	fi
 
 .PHONY: all clean
