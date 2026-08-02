@@ -5,6 +5,7 @@ void draw_init(
     Draw *d,
     Display *dpy,
     Window win,
+    int w, int h,
     const char *fontname,
     const char *fg,
     const char *bg,
@@ -18,12 +19,20 @@ void draw_init(
     d->visual = DefaultVisual(dpy, screen);
     d->cmap   = DefaultColormap(dpy, screen);
 
-    d->draw = XftDrawCreate(dpy, win, d->visual, d->cmap);
+    d->buf = XCreatePixmap(dpy, win, w, h, DefaultDepth(dpy, screen));
+    d->gc  = XCreateGC(dpy, win, 0, NULL);
+
+    d->draw = XftDrawCreate(dpy, d->buf, d->visual, d->cmap);
     d->font = XftFontOpenName(dpy, screen, fontname);
 
     XftColorAllocName(dpy, d->visual, d->cmap, fg,  &d->fg);
     XftColorAllocName(dpy, d->visual, d->cmap, bg,  &d->bg);
     XftColorAllocName(dpy, d->visual, d->cmap, sep, &d->sep);
+}
+
+void draw_present(Draw *d, int w, int h)
+{
+    XCopyArea(d->dpy, d->buf, d->win, d->gc, 0, 0, w, h, 0, 0);
 }
 
 void draw_rect(Draw *d, int x, int y, int w, int h)

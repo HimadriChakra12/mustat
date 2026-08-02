@@ -31,9 +31,6 @@ typedef struct {
 static Block blocks[MAX_BLOCKS];
 static int   block_count = 0;
 
-/* click region of the tray collapse/expand toggle, updated every redraw */
-static int toggle_x, toggle_y, toggle_w, toggle_h;
-
 static void block_update(Pos pos, const char *name, const char *text)
 {
     for (int i = 0; i < block_count; i++) {
@@ -84,24 +81,15 @@ static void redraw(Draw *draw, Tray *tray, int bar_width, int text_y,
     int ws_w = (ws_count > 0) ? ws_render_width(draw, ws_items, ws_count) : 0;
 
     /* ── tray region, reserved from the right edge first ── */
-    const char *glyph = tray->collapsed ? tray_collapsed_glyph : tray_expanded_glyph;
-    int glyph_w = text_width(draw, glyph);
-
     int rx = bar_width - padding;
-    rx -= glyph_w;
-    toggle_x = rx; toggle_y = 0; toggle_w = glyph_w + tray_pad / 2; toggle_h = bar_height;
-    draw_text(draw, rx, text_y, glyph);
-    rx -= tray_pad;
 
     if (tray->icon_count > 0) {
-        int icons_w = tray->icon_count * (tray_icon_size + tray_icon_gap);
+        int icons_w = tray_width(tray, tray_icon_size, tray_icon_gap);
         rx -= icons_w;
         tray_layout(tray, rx, tray_icon_size, tray_icon_gap, bar_height);
         rx -= sep_pad / 2;
         draw_vline(draw, rx, 8, bar_height);
         rx -= sep_pad / 2;
-    } else {
-        tray_layout(tray, rx, tray_icon_size, tray_icon_gap, bar_height);
     }
 
     /* ── LEFT: workspace (if positioned here) then LEFT blocks ── */
@@ -181,7 +169,7 @@ void bar_run(void)
     Window root  = RootWindow(dpy, screen);
 
     XSetWindowAttributes attr = {0};
-    attr.event_mask = ExposureMask | ButtonPressMask | StructureNotifyMask;
+    attr.event_mask = ExposureMask | StructureNotifyMask;
 
     Window win = XCreateWindow(
         dpy, root,
@@ -219,8 +207,8 @@ void bar_run(void)
     XRaiseWindow(dpy, win);
 
     Draw draw;
-    draw_init(&draw, dpy, win, font, fg, bg, sep_color);
     int bar_width = width - 2*margin;
+    draw_init(&draw, dpy, win, bar_width, bar_height, font, fg, bg, sep_color);
     int text_y    = (bar_height + draw.font->ascent - draw.font->descent) / 2;
 
     Workspace ws;
@@ -235,6 +223,7 @@ void bar_run(void)
     int    ws_count = ws_get_items(&ws, ws_items, WS_MAX_ITEMS);
 
     redraw(&draw, &tray, bar_width, text_y, ws_items, ws_count);
+    draw_present(&draw, bar_width, bar_height);
     XFlush(dpy);
 
     /* connected mublocks clients */
@@ -325,14 +314,6 @@ void bar_run(void)
                             if (tray_handle_structure_event(&tray, ev.xdestroywindow.window, 1))
                                 dirty = 1;
                             break;
-                        case ButtonPress:
-                            if (ev.xbutton.window == win &&
-                                ev.xbutton.x >= toggle_x && ev.xbutton.x <= toggle_x + toggle_w &&
-                                ev.xbutton.y >= toggle_y && ev.xbutton.y <= toggle_y + toggle_h) {
-                                tray_toggle(&tray);
-                                dirty = 1;
-                            }
-                            break;
                         case Expose:
                             dirty = 1;
                             break;
@@ -348,6 +329,7 @@ void bar_run(void)
 
         if (dirty) {
             redraw(&draw, &tray, bar_width, text_y, ws_items, ws_count);
+            draw_present(&draw, bar_width, bar_height);
             XFlush(dpy);
         }
     }

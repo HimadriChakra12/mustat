@@ -18,9 +18,7 @@ static int sep_pad            = 10; /* space either side of a separator line */
 /* ── systray ──────────────────────────────────────────────── */
 static int tray_icon_size     = 20;
 static int tray_icon_gap      = 6;
-static int tray_pad           = 12;
-static const char *tray_collapsed_glyph = "\u25B6"; /* ▶ collapsed indicator */
-static const char *tray_expanded_glyph  = "\u25C0"; /* ◀ expanded indicator  */
+static int tray_pad           = 12; /* space between tray icons and separator */
 
 static WsStyle ws_style = WS_STYLE_UNDERLINE;
 static WsPos   ws_pos   = WS_POS_LEFT;

@@ -5,12 +5,14 @@
 #include <X11/Xft/Xft.h>
 
 typedef struct {
-    Display *dpy;
-    Window win;
-    Visual  *visual;
-    Colormap cmap;
+    Display  *dpy;
+    Window    win;      /* real, on-screen window                          */
+    Pixmap    buf;       /* off-screen back buffer, same size as win        */
+    GC        gc;
+    Visual   *visual;
+    Colormap  cmap;
 
-    XftDraw *draw;
+    XftDraw *draw;      /* draws into `buf`, never directly into `win`      */
     XftFont *font;
 
     XftColor fg;
@@ -19,15 +21,22 @@ typedef struct {
 
 } Draw;
 
+/* Creates an off-screen pixmap (w x h) matching win's depth and draws
+ * into that; nothing hits the screen until draw_present(). */
 void draw_init(
     Draw *d,
     Display *dpy,
     Window win,
+    int w, int h,
     const char *fontname,
     const char *fg,
     const char *bg,
     const char *sep
 );
+
+/* Blits the finished back buffer to the window in one shot — avoids
+ * the flicker/tearing you'd get drawing clear+text directly on-screen. */
+void draw_present(Draw *d, int w, int h);
 
 void draw_rect(Draw *d, int x, int y, int w, int h);
 

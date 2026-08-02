@@ -89,28 +89,15 @@ int tray_handle_structure_event(Tray *t, Window w, int destroyed)
     return 0;
 }
 
-void tray_toggle(Tray *t)
+int tray_width(const Tray *t, int icon_size, int gap)
 {
-    t->collapsed = !t->collapsed;
-}
-
-int tray_width(const Tray *t, int icon_size, int gap, int glyph_w, int pad)
-{
-    int w = glyph_w + pad;
-    if (!t->collapsed && t->icon_count > 0)
-        w += t->icon_count * (icon_size + gap);
-    return w;
+    if (t->icon_count == 0) return 0;
+    return t->icon_count * icon_size + (t->icon_count - 1) * gap;
 }
 
 int tray_layout(Tray *t, int x, int icon_size, int gap, int bar_height)
 {
     int y = (bar_height - icon_size) / 2;
-
-    if (t->collapsed) {
-        for (int i = 0; i < t->icon_count; i++)
-            XUnmapWindow(t->dpy, t->icons[i]);
-        return x;
-    }
 
     int cx = x;
     for (int i = 0; i < t->icon_count; i++) {

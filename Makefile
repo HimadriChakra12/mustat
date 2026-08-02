@@ -1,4 +1,4 @@
-CC      = gcc
+CC      = clang
 CFLAGS  = -O2 -Wall -std=c99 -D_POSIX_C_SOURCE=200809L \
           -I/usr/include/freetype2 -I/usr/include/libpng16
 LIBS    = -lXft -lX11
