@@ -31,7 +31,7 @@ module {
 module {
   name     = "battery",
   type     = "script",
-  cmd = [[upower -i "$(upower -e | grep BAT)" | awk '/state:/ {s=$2} /percentage:/ {print (s=="charging"?"C":s=="fully-charged"?"F":"B"),$2}']]
+  cmd      = [[upower -i "$(upower -e | grep BAT)" | awk '/state:/ {s=$2} /percentage:/ {print (s=="charging"?"C":s=="fully-charged"?"F":"B"),$2}']],
   pos      = "right",
   interval = 10,
 }
