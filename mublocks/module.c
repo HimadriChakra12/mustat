@@ -71,7 +71,7 @@ static void mod_mem(Block *b)
 
 static void mod_script(Block *b)
 {
-    FILE *fp = popen(b->script, "r");
+    FILE *fp = popen(b->cmd, "r");
     if (!fp) return;
     fgets(b->output, sizeof(b->output), fp);
     b->output[strcspn(b->output, "\n")] = 0;

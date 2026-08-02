@@ -2,14 +2,25 @@ CC      = gcc
 CFLAGS  = -O2 -Wall -std=c99 -D_POSIX_C_SOURCE=200809L \
           -I/usr/include/freetype2 -I/usr/include/libpng16
 LIBS    = -lXft -lX11
+PREFIX  = /usr/local
+BINDIR  = $(PREFIX)/bin
 
-all: ibar iblocks/iblocks
+LUA_CFLAGS := $(shell pkg-config --cflags lua5.4 2>/dev/null || pkg-config --cflags lua-5.4 2>/dev/null || pkg-config --cflags lua 2>/dev/null)
+LUA_LIBS   := $(shell pkg-config --libs   lua5.4 2>/dev/null || pkg-config --libs   lua-5.4 2>/dev/null || pkg-config --libs   lua 2>/dev/null)
 
-ibar: main.c bar.c draw.c i3ipc.c
+all: mustat mublocks/mustat-blocks
+
+mustat: main.c bar.c draw.c workspace.c ws_render.c tray.c
 	$(CC) $(CFLAGS) $^ -o $@ $(LIBS)
 
-iblocks/iblocks: iblocks/main.c iblocks/module.c
-	$(CC) $(CFLAGS) -Iiblocks $^ -o $@
+mublocks/mustat-blocks: mublocks/main.c mublocks/module.c mublocks/lua_config.c
+	$(CC) $(CFLAGS) $(LUA_CFLAGS) -Imublocks $^ -o $@ $(LUA_LIBS)
 
 clean:
-	rm -f ibar iblocks/iblocks
+	rm -f mustat mublocks/mustat-blocks
+
+install:
+	install mustat $(PREFIX)/bin/mustat
+	install mublocks/mustat-blocks $(PREFIX)/bin/mustat-blocks
+
+.PHONY: all clean

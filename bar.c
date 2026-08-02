@@ -2,7 +2,9 @@
 
 #include "bar.h"
 #include "draw.h"
-#include "i3ipc.h"
+#include "workspace.h"
+#include "ws_render.h"
+#include "tray.h"
 #include "ipc.h"
 #include "config.h"
 
@@ -21,31 +23,35 @@
 typedef enum { POS_LEFT, POS_CENTER, POS_RIGHT } Pos;
 
 typedef struct {
-    int  slot;
     Pos  pos;
+    char name[64];
     char text[256];
 } Block;
 
 static Block blocks[MAX_BLOCKS];
 static int   block_count = 0;
 
-static void block_update(Pos pos, int slot, const char *text)
+/* click region of the tray collapse/expand toggle, updated every redraw */
+static int toggle_x, toggle_y, toggle_w, toggle_h;
+
+static void block_update(Pos pos, const char *name, const char *text)
 {
     for (int i = 0; i < block_count; i++) {
-        if (blocks[i].pos == slot && blocks[i].slot == slot) {
+        if (blocks[i].pos == pos && strcmp(blocks[i].name, name) == 0) {
             snprintf(blocks[i].text, sizeof(blocks[i].text), "%s", text);
             return;
         }
     }
     if (block_count < MAX_BLOCKS) {
-        blocks[block_count].pos  = pos;
-        blocks[block_count].slot = slot;
+        blocks[block_count].pos = pos;
+        snprintf(blocks[block_count].name, sizeof(blocks[block_count].name), "%s", name);
         snprintf(blocks[block_count].text, sizeof(blocks[block_count].text), "%s", text);
         block_count++;
     }
 }
 
-/* parse "LEFT:1:some text" */
+/* parse "LEFT:clock: 12:30:00" — pos, then name (no colon), then text
+ * (which may itself contain colons, e.g. clock output). */
 static void parse_line(char *line)
 {
     Pos pos;
@@ -54,10 +60,10 @@ static void parse_line(char *line)
     else if (strncmp(line, "RIGHT:",  6) == 0) { pos = POS_RIGHT;  line += 6; }
     else return;
 
-    int slot = atoi(line);
     char *colon = strchr(line, ':');
     if (!colon) return;
-    block_update(pos, slot, colon + 1);
+    *colon = 0;
+    block_update(pos, line, colon + 1);
 }
 
 static int blocks_total_width(Draw *draw, Pos pos)
@@ -70,23 +76,50 @@ static int blocks_total_width(Draw *draw, Pos pos)
     return w;
 }
 
-static void redraw(Draw *draw, int bar_width, int text_y, char *ws_buf)
+static void redraw(Draw *draw, Tray *tray, int bar_width, int text_y,
+                    WsItem *ws_items, int ws_count)
 {
     draw_rect(draw, 0, 0, bar_width, bar_height);
 
-    /* LEFT — workspace always first */
-    int x = padding;
-    draw_text(draw, x, text_y, ws_buf);
-    x += text_width(draw, ws_buf) + padding;
+    int ws_w = (ws_count > 0) ? ws_render_width(draw, ws_items, ws_count) : 0;
 
+    /* ── tray region, reserved from the right edge first ── */
+    const char *glyph = tray->collapsed ? tray_collapsed_glyph : tray_expanded_glyph;
+    int glyph_w = text_width(draw, glyph);
+
+    int rx = bar_width - padding;
+    rx -= glyph_w;
+    toggle_x = rx; toggle_y = 0; toggle_w = glyph_w + tray_pad / 2; toggle_h = bar_height;
+    draw_text(draw, rx, text_y, glyph);
+    rx -= tray_pad;
+
+    if (tray->icon_count > 0) {
+        int icons_w = tray->icon_count * (tray_icon_size + tray_icon_gap);
+        rx -= icons_w;
+        tray_layout(tray, rx, tray_icon_size, tray_icon_gap, bar_height);
+        rx -= sep_pad / 2;
+        draw_vline(draw, rx, 8, bar_height);
+        rx -= sep_pad / 2;
+    } else {
+        tray_layout(tray, rx, tray_icon_size, tray_icon_gap, bar_height);
+    }
+
+    /* ── LEFT: workspace (if positioned here) then LEFT blocks ── */
+    int x = padding;
+    if (ws_pos == WS_POS_LEFT && ws_count > 0) {
+        x = ws_render_draw(draw, x, text_y, bar_height, ws_items, ws_count);
+        x += sep_pad;
+        draw_vline(draw, x, 8, bar_height);
+        x += sep_pad;
+    }
     for (int i = 0; i < block_count; i++) {
         if (blocks[i].pos != POS_LEFT) continue;
         draw_text(draw, x, text_y, blocks[i].text);
         x += text_width(draw, blocks[i].text) + padding;
     }
 
-    /* RIGHT */
-    int rx = bar_width - padding;
+    /* ── RIGHT blocks (stopping short of the tray region), then
+     *    the workspace segment if it's positioned here ── */
     for (int i = block_count - 1; i >= 0; i--) {
         if (blocks[i].pos != POS_RIGHT) continue;
         int w = text_width(draw, blocks[i].text);
@@ -94,10 +127,28 @@ static void redraw(Draw *draw, int bar_width, int text_y, char *ws_buf)
         draw_text(draw, rx, text_y, blocks[i].text);
         rx -= padding;
     }
+    if (ws_pos == WS_POS_RIGHT && ws_count > 0) {
+        rx -= sep_pad;
+        draw_vline(draw, rx, 8, bar_height);
+        rx -= sep_pad;
+        rx -= ws_w;
+        ws_render_draw(draw, rx, text_y, bar_height, ws_items, ws_count);
+    }
 
-    /* CENTER */
+    /* ── CENTER: workspace (if positioned here) then CENTER blocks,
+     *    the whole group centered as one unit ── */
     int cw = blocks_total_width(draw, POS_CENTER);
-    int cx = (bar_width - cw) / 2;
+    int total_w = cw;
+    if (ws_pos == WS_POS_CENTER && ws_count > 0)
+        total_w += ws_w + 2 * sep_pad + 1;
+
+    int cx = (bar_width - total_w) / 2;
+    if (ws_pos == WS_POS_CENTER && ws_count > 0) {
+        cx = ws_render_draw(draw, cx, text_y, bar_height, ws_items, ws_count);
+        cx += sep_pad;
+        draw_vline(draw, cx, 8, bar_height);
+        cx += sep_pad;
+    }
     for (int i = 0; i < block_count; i++) {
         if (blocks[i].pos != POS_CENTER) continue;
         draw_text(draw, cx, text_y, blocks[i].text);
@@ -107,7 +158,7 @@ static void redraw(Draw *draw, int bar_width, int text_y, char *ws_buf)
 
 static int server_init(void)
 {
-    unlink(IBAR_SOCKET);
+    unlink(MUSTAT_SOCKET);
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return -1;
 
@@ -115,7 +166,7 @@ static int server_init(void)
 
     struct sockaddr_un addr = {0};
     addr.sun_family = AF_UNIX;
-    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", IBAR_SOCKET);
+    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", MUSTAT_SOCKET);
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(fd); return -1; }
     listen(fd, 4);
@@ -130,6 +181,7 @@ void bar_run(void)
     Window root  = RootWindow(dpy, screen);
 
     XSetWindowAttributes attr = {0};
+    attr.event_mask = ExposureMask | ButtonPressMask | StructureNotifyMask;
 
     Window win = XCreateWindow(
         dpy, root,
@@ -139,11 +191,11 @@ void bar_run(void)
         DefaultDepth(dpy, screen),
         CopyFromParent,
         DefaultVisual(dpy, screen),
-        0,
+        CWEventMask,
         &attr
     );
 
-    XStoreName(dpy, win, "ibar");
+    XStoreName(dpy, win, "mustat");
 
     /* dock type */
     Atom dock = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
@@ -167,34 +219,44 @@ void bar_run(void)
     XRaiseWindow(dpy, win);
 
     Draw draw;
-    draw_init(&draw, dpy, win, font, fg, bg);
+    draw_init(&draw, dpy, win, font, fg, bg, sep_color);
     int bar_width = width - 2*margin;
     int text_y    = (bar_height + draw.font->ascent - draw.font->descent) / 2;
 
-    int i3_fd  = i3_subscribe_workspaces();
+    Workspace ws;
+    ws_init(&ws, dpy, root);
+
+    Tray tray;
+    tray_init(&tray, dpy, win, screen);
+
     int srv_fd = server_init();
 
-    char ws_buf[256];
-    i3_get_workspaces(-1, ws_buf, sizeof(ws_buf));
+    WsItem ws_items[WS_MAX_ITEMS];
+    int    ws_count = ws_get_items(&ws, ws_items, WS_MAX_ITEMS);
 
-    redraw(&draw, bar_width, text_y, ws_buf);
+    redraw(&draw, &tray, bar_width, text_y, ws_items, ws_count);
     XFlush(dpy);
 
-    /* connected iblocks clients */
+    /* connected mublocks clients */
     int clients[8];
     int client_count = 0;
     memset(clients, -1, sizeof(clients));
 
     char linebuf[512];
+    int xfd = ConnectionNumber(dpy);
 
     while (1)
     {
         fd_set fds;
         FD_ZERO(&fds);
-        if (i3_fd  >= 0) FD_SET(i3_fd,  &fds);
+        int ws_fd_ = ws_fd(&ws);
+        if (ws_fd_ >= 0) FD_SET(ws_fd_, &fds);
         if (srv_fd >= 0) FD_SET(srv_fd, &fds);
+        FD_SET(xfd, &fds);
 
-        int maxfd = (i3_fd > srv_fd ? i3_fd : srv_fd);
+        int maxfd = xfd;
+        if (ws_fd_ > maxfd) maxfd = ws_fd_;
+        if (srv_fd > maxfd) maxfd = srv_fd;
 
         for (int i = 0; i < client_count; i++) {
             if (clients[i] >= 0) {
@@ -209,14 +271,14 @@ void bar_run(void)
         int dirty = 0;
 
         if (ret > 0) {
-            /* new iblocks connection */
+            /* new mublocks connection */
             if (srv_fd >= 0 && FD_ISSET(srv_fd, &fds)) {
                 int cfd = accept(srv_fd, NULL, NULL);
                 if (cfd >= 0 && client_count < 8)
                     clients[client_count++] = cfd;
             }
 
-            /* data from iblocks */
+            /* data from mublocks */
             for (int i = 0; i < client_count; i++) {
                 if (clients[i] < 0 || !FD_ISSET(clients[i], &fds)) continue;
                 int n = read(clients[i], linebuf, sizeof(linebuf) - 1);
@@ -225,7 +287,6 @@ void bar_run(void)
                     clients[i] = -1;
                 } else {
                     linebuf[n] = 0;
-                    /* split on newlines */
                     char *line = linebuf;
                     char *nl;
                     while ((nl = strchr(line, '\n'))) {
@@ -237,11 +298,48 @@ void bar_run(void)
                 }
             }
 
-            /* i3 workspace event */
-            if (i3_fd >= 0 && FD_ISSET(i3_fd, &fds)) {
-                i3_drain_event(i3_fd);
-                i3_get_workspaces(-1, ws_buf, sizeof(ws_buf));
+            /* i3/sway workspace event */
+            if (ws_fd_ >= 0 && FD_ISSET(ws_fd_, &fds)) {
+                ws_drain_ipc(&ws);
+                ws_count = ws_get_items(&ws, ws_items, WS_MAX_ITEMS);
                 dirty = 1;
+            }
+
+            /* X11 events: EWMH workspace changes, tray protocol, clicks */
+            if (FD_ISSET(xfd, &fds)) {
+                XEvent ev;
+                while (XPending(dpy)) {
+                    XNextEvent(dpy, &ev);
+
+                    if (ws_handle_xevent(&ws, &ev)) {
+                        ws_count = ws_get_items(&ws, ws_items, WS_MAX_ITEMS);
+                        dirty = 1;
+                    }
+
+                    switch (ev.type) {
+                        case ClientMessage:
+                            if (tray_handle_client_message(&tray, &ev.xclient))
+                                dirty = 1;
+                            break;
+                        case DestroyNotify:
+                            if (tray_handle_structure_event(&tray, ev.xdestroywindow.window, 1))
+                                dirty = 1;
+                            break;
+                        case ButtonPress:
+                            if (ev.xbutton.window == win &&
+                                ev.xbutton.x >= toggle_x && ev.xbutton.x <= toggle_x + toggle_w &&
+                                ev.xbutton.y >= toggle_y && ev.xbutton.y <= toggle_y + toggle_h) {
+                                tray_toggle(&tray);
+                                dirty = 1;
+                            }
+                            break;
+                        case Expose:
+                            dirty = 1;
+                            break;
+                        default:
+                            break;
+                    }
+                }
             }
         } else {
             /* 1s tick */
@@ -249,7 +347,7 @@ void bar_run(void)
         }
 
         if (dirty) {
-            redraw(&draw, bar_width, text_y, ws_buf);
+            redraw(&draw, &tray, bar_width, text_y, ws_items, ws_count);
             XFlush(dpy);
         }
     }

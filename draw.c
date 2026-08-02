@@ -7,80 +7,60 @@ void draw_init(
     Window win,
     const char *fontname,
     const char *fg,
-    const char *bg
+    const char *bg,
+    const char *sep
 )
 {
     int screen = DefaultScreen(dpy);
 
-    d->dpy = dpy;
-    d->win = win;
+    d->dpy    = dpy;
+    d->win    = win;
+    d->visual = DefaultVisual(dpy, screen);
+    d->cmap   = DefaultColormap(dpy, screen);
 
-    d->draw = XftDrawCreate(
-        dpy,
-        win,
-        DefaultVisual(dpy,screen),
-        DefaultColormap(dpy,screen)
-    );
+    d->draw = XftDrawCreate(dpy, win, d->visual, d->cmap);
+    d->font = XftFontOpenName(dpy, screen, fontname);
 
-    d->font = XftFontOpenName(
-        dpy,
-        screen,
-        fontname
-    );
-
-    XftColorAllocName(
-        dpy,
-        DefaultVisual(dpy,screen),
-        DefaultColormap(dpy,screen),
-        fg,
-        &d->fg
-    );
-
-    XftColorAllocName(
-        dpy,
-        DefaultVisual(dpy,screen),
-        DefaultColormap(dpy,screen),
-        bg,
-        &d->bg
-    );
+    XftColorAllocName(dpy, d->visual, d->cmap, fg,  &d->fg);
+    XftColorAllocName(dpy, d->visual, d->cmap, bg,  &d->bg);
+    XftColorAllocName(dpy, d->visual, d->cmap, sep, &d->sep);
 }
 
 void draw_rect(Draw *d, int x, int y, int w, int h)
 {
-    XftDrawRect(
-        d->draw,
-        &d->bg,
-        x,
-        y,
-        w,
-        h
-    );
+    XftDrawRect(d->draw, &d->bg, x, y, w, h);
+}
+
+void draw_vline(Draw *d, int x, int inset, int bar_height)
+{
+    XftDrawRect(d->draw, &d->sep, x, inset, 1, bar_height - 2 * inset);
 }
 
 void draw_text(Draw *d, int x, int y, const char *text)
 {
-    XftDrawStringUtf8(
-        d->draw,
-        &d->fg,
-        d->font,
-        x,
-        y,
-        (XftChar8*)text,
-        strlen(text)
-    );
+    XftDrawStringUtf8(d->draw, &d->fg, d->font, x, y, (XftChar8*)text, strlen(text));
 }
 
 int text_width(Draw *d, const char *text)
 {
     XGlyphInfo ext;
-
-    XftTextExtentsUtf8(
-        d->dpy,
-        d->font,
-        (XftChar8*)text,
-        strlen(text),
-        &ext
-    );
-
+    XftTextExtentsUtf8(d->dpy, d->font, (XftChar8*)text, strlen(text), &ext);
     return ext.xOff;
+}
+
+XftColor draw_color(Draw *d, const char *name)
+{
+    XftColor c;
+    XftColorAllocName(d->dpy, d->visual, d->cmap, name, &c);
+    return c;
+}
+
+void draw_rect_c(Draw *d, const XftColor *c, int x, int y, int w, int h)
+{
+    XftDrawRect(d->draw, c, x, y, w, h);
+}
+
+void draw_text_c(Draw *d, const XftColor *c, int x, int y, const char *text)
+{
+    XftDrawStringUtf8(d->draw, c, d->font, x, y, (XftChar8*)text, strlen(text));
 }
